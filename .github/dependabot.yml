@@ -1,0 +1,10 @@
+# Repo baseline (maw-ops parent workspace: shared/repo-baseline, backlog R09).
+# Monthly, small batches. apply.sh keeps the uv / npm blocks only when the repo
+# has uv.lock / package-lock.json at its root.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5

@@ -1,0 +1,50 @@
+# Repo baseline hooks (maw-ops parent workspace: shared/repo-baseline, backlog R09).
+# Install once per clone: pre-commit install
+# Run on everything:       pre-commit run --all-files
+# CI runs the same hooks (.github/workflows/ci.yml), with gitleaks scanned there separately.
+# All hooks here only check; none rewrites files. Bump revs deliberately
+# (pre-commit autoupdate), never float them. Repo-specific hooks go below the baseline block.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        # Syntax only, so CloudFormation/SAM tags (!Ref, !Sub) are accepted.
+        args: [--unsafe]
+      - id: check-json
+        # tsconfig and VS Code files are JSON with comments.
+        exclude: (^|/)(tsconfig[^/]*\.json|\.vscode/.*)$
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      # Scans staged changes; uses .gitleaks.toml at the repo root if present.
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3
+    hooks:
+      # Baseline is errors only: syntax errors and undefined names. Widen per repo
+      # in pyproject.toml ([tool.ruff]) and drop --select when the code is clean.
+      - id: ruff-check
+        args: [--select, "E9,F63,F7,F82", --no-fix]
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  # Doc front matter + staleness (opt-in). First vendor the parent's
+  # shared/docs-tools/check_stale.py to tools/check_stale.py, then uncomment.
+  # - repo: local
+  #   hooks:
+  #     - id: docs-stale
+  #       name: doc front matter and staleness
+  #       language: python
+  #       additional_dependencies: [pyyaml]
+  #       entry: python tools/check_stale.py --repo .
+  #       pass_filenames: false
+  #       always_run: true

@@ -1,0 +1,119 @@
+# Repo baseline CI (maw-ops parent workspace: shared/repo-baseline, backlog R09).
+#
+# One job named `ci`: make it the required status check on main. It has NO cloud
+# credentials: `contents: read` only, so no OIDC token can be minted here. Do not
+# add credentials; anything that needs them is not a CI check.
+#
+# Deploy workflows call this file and wait for it:
+#   jobs:
+#     ci:
+#       uses: ./.github/workflows/ci.yml
+#     deploy:
+#       needs: [ci]
+#
+# Steps switch on files that exist, so the same copy fits every repo:
+#   always            gitleaks (working tree) + pre-commit hooks on all files
+#   uv.lock           uv sync --frozen, then pytest (pyproject deselects `live` tests)
+#   package-lock.json npm ci, then lint / test / build when those scripts exist
+#   template.yaml     sam validate --lint (local lint; no AWS calls)
+# Re-copy from the template rather than editing it here. Repo-specific checks go
+# in their own workflow or job.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      PRE_COMMIT_VERSION: 4.6.0
+      SAM_CLI_TELEMETRY: 0
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # First, before any install step puts third-party files in the tree.
+      - name: Secret scan (gitleaks, pinned and checksum-verified)
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          cd "$RUNNER_TEMP"
+          curl -sSfLO "${base}/${tarball}"
+          curl -sSfLO "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          sha256sum --check --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          tar xzf "${tarball}" gitleaks
+          cd "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/gitleaks" dir . --redact --no-banner --exit-code 1
+
+      - uses: astral-sh/setup-uv@v5
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Pre-commit hooks (all files)
+        env:
+          SKIP: gitleaks # scanned above; the hook only looks at staged changes
+        run: uvx "pre-commit@${PRE_COMMIT_VERSION}" run --all-files --show-diff-on-failure
+
+      - name: Python - install (uv.lock)
+        if: hashFiles('uv.lock') != ''
+        run: uv sync --frozen
+
+      # Exit code 5 means pytest collected no tests (repo has none yet): not a failure.
+      - name: Python - tests (offline; live marker excluded)
+        if: hashFiles('uv.lock') != ''
+        run: |
+          rc=0
+          uv run --frozen pytest || rc=$?
+          if [ "$rc" -eq 5 ]; then echo "::notice::pytest collected no tests"; exit 0; fi
+          exit "$rc"
+
+      - name: Node - setup
+        if: hashFiles('package-lock.json') != ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Node - install
+        if: hashFiles('package-lock.json') != ''
+        run: npm ci
+
+      - name: Node - lint
+        if: hashFiles('package-lock.json') != ''
+        run: npm run lint --if-present
+
+      - name: Node - tests
+        if: hashFiles('package-lock.json') != ''
+        run: npm test --if-present
+
+      - name: Node - build
+        if: hashFiles('package-lock.json') != ''
+        run: npm run build --if-present
+
+      - name: SAM - setup
+        if: hashFiles('template.yaml') != ''
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      # --config-env names a samconfig.toml section that does not exist, so a
+      # local `profile = ...` in samconfig.toml is not applied (CI has no profiles).
+      - name: SAM - validate and lint template
+        if: hashFiles('template.yaml') != ''
+        run: sam validate --lint --template-file template.yaml --region us-east-1 --config-env ci-no-profile
