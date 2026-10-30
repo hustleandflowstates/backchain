@@ -58,7 +58,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           "$RUNNER_TEMP/gitleaks" dir . --redact --no-banner --exit-code 1
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
 
       - uses: actions/cache@v4
         with:
