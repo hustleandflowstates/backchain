@@ -108,7 +108,7 @@ jobs:
 
       - name: SAM - setup
         if: hashFiles('template.yaml') != ''
-        uses: aws-actions/setup-sam@v2
+        uses: aws-actions/setup-sam@v3
         with:
           use-installer: true
 
